@@ -1,0 +1,244 @@
+parameters:
+  - name: tests
+    displayName: Tests à exécuter 
+    type: object
+    default:
+      - name: '23384'
+        testCaseId: '31122'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23385'
+        testCaseId: '31122'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23386'
+        testCaseId: '31117'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23387'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23388'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23392'
+        testCaseId: '30710'
+        testPlanId: '23688'
+        testSuiteId: '23691'
+      - name: '23395'
+        testCaseId: '30710'
+        testPlanId: '23688'
+        testSuiteId: '23691'
+      - name: '23575'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068'  
+      - name: '23576'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23577'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23578'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068' 
+      - name: '23585'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23650'
+        testCaseId: '30710'
+        testPlanId: '30066'
+        testSuiteId: '30068'
+      - name: '23394'
+        testCaseId: 'xxx'
+        testPlanId: 'xxx'
+        testSuiteId: 'xxx'
+  - name: sendResultsToTestPlans
+    displayName: "Envoi des résultats dans TestPlans"
+    type: boolean
+    default: false       
+
+trigger:
+  - none
+
+pool:
+  name: Azure Pipelines
+  vmImage: windows-latest
+
+variables:
+  organization: 'BVDSIZF'
+  project: 'Salesforce COE France-Zone'
+
+jobs:
+  - job: RunMultipleTestsAndUpdateTestPlan
+    timeoutInMinutes: 600 # how long to run the job before automatically cancelling
+    steps:
+      - task: UsePythonVersion@0
+        displayName: 'Use Python 3.11'
+        inputs:
+          versionSpec: 3.11
+
+      - script: |
+          npm install @salesforce/cli --global
+        displayName: 'Install SFDX' 
+
+      - script: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+        displayName: 'Install Dependencies'
+
+      - script: |
+          rfbrowser init chromium
+        displayName: 'Install rfbrowser'
+
+      - ${{ each test in parameters.tests }}:  ##########################################################################################
+        - script: |
+            echo Running Robot Framework Test - ${{ test.name }}
+            robot -d Results -x xUnit_${{ test.name }} Tests/Scripts/${{ test.name }}.robot
+          displayName: 'Run Test ${{ test.name }}.robot (ID = ${{ test.testCaseId }})'
+          continueOnError: true  # Continue even if tests fail
+
+  ##########################################################################################
+        # Step to set the test status variable based on the XML results
+        - task: PowerShell@2
+          name: GetXMLResults_${{ test.name }}
+          inputs:
+            targetType: 'inline'
+            script: |
+              $xmlContent = [xml](Get-Content -Path "$(Agent.WorkFolder)\1\s\Results\output.xml")
+              $result = "Passed"
+              if ($xmlContent.robot.statistics.total.stat.fail -eq "1") {
+                  $result = "Failed"
+              }
+              Write-Host "Le résultat du test est : $result"
+
+              if ($result -eq "Failed") {
+                  Write-Host "##vso[task.setvariable variable=testStatus_${{ test.name }};isOutput=true]Failed"
+              } elseif ($result -eq "Passed") {
+                  Write-Host "##vso[task.setvariable variable=testStatus_${{ test.name }};isOutput=true]Passed"
+              } else {
+                  Write-Host "##vso[task.setvariable variable=testStatus_${{ test.name }};isOutput=true]Unknown"
+              }
+  ##############################################################################################################################
+        - script: |
+            echo "##vso[build.addbuildtag]${{ test.name }}
+          displayName: 'Add tag ${{ test.name }} to current build'
+          continueOnError: true  # Continue even if tests fail
+
+        - task: PowerShell@2
+          name: ZipResults_${{ test.name }}
+          inputs:
+              targetType: 'inline'
+              script: |
+                Compress-Archive -Path $(Agent.WorkFolder)\1\s\Results -DestinationPath $(Agent.WorkFolder)\1\s\Results.zip -Force
+          continueOnError: true  # Continue even if tests fail
+        
+        - task: PublishBuildArtifacts@1
+          inputs:
+            pathToPublish: '$(Agent.WorkFolder)\1\s\Results'
+            artifactName: 'Results_${{ test.name }}'
+            publishLocation: 'Container'
+          displayName: 'Archive artifacts - ${{ test.name }}'
+
+        - task: PublishHtmlReport@1
+          inputs:
+            tabName: 'HTMLReport-${{ test.name }}'
+            reportDir: '$(Agent.WorkFolder)\1\s\Results\log.html'
+          displayName: 'HTML Report - ${{ test.name }}'
+
+        - task: PublishTestResults@2
+          inputs:
+            testResultsFormat: 'JUnit'
+            testResultsFiles: '**\Results\xUnit_${{ test.name }}.xml'
+          displayName: 'XUnit Report - ${{ test.name }}'          
+##############################################################################################################################
+
+  ####################################################################################################################################################################################
+  ####################################################################################################################################################################################
+  ####################################################################################################################################################################################
+  ####################################################################################################################################################################################
+
+        - task: PowerShell@2
+          name: AzureAPI_${{ test.name }}
+          displayName: AzureAPI_${{ test.name }}
+          continueOnError: true  # Continue even if task fails
+          condition: eq('${{ parameters.sendResultsToTestPlans }}', 'true')  # Only run if the parameter is set to true
+          inputs:
+            targetType: 'inline'
+            script: |
+              $organization = "$(organization)"
+              $project = "$(project)"
+              $testPlanId = "${{ test.testPlanId }}"
+              $testSuiteId = "${{ test.testSuiteId }}"
+              $testCaseId = "${{ test.testCaseId }}"
+
+              $uri = "https://dev.azure.com/$organization/$project/_apis/test/plans/$testPlanId/suites/$testSuiteId/points?testCaseId=$testCaseId&api-version=5.0"
+              $response = Invoke-RestMethod -Uri $uri -Method Get -Headers @{Authorization = "Bearer $(System.AccessToken)"}
+              $json = $response.value[0] | ConvertTo-Json
+              $json = $json | ConvertFrom-Json
+              $testPointId = $json.id # Exemple pour obtenir le premier point de test
+              Write-Output "##vso[task.setvariable variable=testPointId_${{ test.testCaseId }};isOutput=true]$testPointId"
+              Write-Output "Test Point ID - ${{ test.testCaseId }}: $testPointId"
+
+              $body = @{
+                "name" = "Test Run for ${{ test.name }}"
+                "plan" = @{
+                  "id" = $testPlanId
+                }
+                "pointIds" = @($testPointId)
+              } | ConvertTo-Json
+
+              $uri = "https://dev.azure.com/$organization/$project/_apis/test/runs?api-version=5.0"
+              $response = Invoke-RestMethod -Uri $uri -Method Post -Headers @{Authorization = "Bearer $(System.AccessToken)"; "Content-Type" = "application/json"} -Body $body
+              $testRunId = $response.id
+              Write-Output "##vso[task.setvariable variable=testRunId_${{ test.testCaseId }};isOutput=true]$testRunId"
+              Write-Output "Test Run ID - ${{ test.testCaseId }}: $testRunId"
+
+
+              $uri = "https://dev.azure.com/$organization/$project/_apis/test/runs/$testRunId/results?api-version=5.0"
+              $response = Invoke-RestMethod -Uri $uri -Method Get -Headers @{Authorization = "Bearer $(System.AccessToken)"}
+              $testResultId = $response.value[0].id  # Exemple pour obtenir le premier résultat de test
+              Write-Output "##vso[task.setvariable variable=testResultId_${{ test.testCaseId }};isOutput=true]$testResultId"
+              Write-Output "Test Result ID - ${{ test.testCaseId }}: $testResultId"
+
+              $testStatus = "$(GetXMLResults_${{ test.name }}.testStatus_${{ test.name }})"
+              Write-Host "The test status for  ${{ test.testCaseId }} is: $testStatus"
+
+              $body = @"
+              [
+                  {
+                      `"id`": "$testResultId" ,
+                      `"outcome`": `"$testStatus`",
+                      `"state`": `"Completed`",
+                      `"comment`": `"Execution from pipeline`"
+                  }
+              ]
+              "@
+
+              $uri = "https://dev.azure.com/$organization/$project/_apis/test/runs/$testRunId/results?api-version=6.0"
+              $response = Invoke-RestMethod -Uri $uri -Method Patch -Headers @{Authorization = "Bearer $(System.AccessToken)"; "Content-Type" = "application/json"} -Body $body
+              Write-Output "Test Result Updated - ${{ test.testCaseId }}"
+
+              $filePath = "$(Agent.WorkFolder)\1\s\Results\log.html"  # Chemin vers le fichier
+
+              $fileContent = [System.IO.File]::ReadAllBytes($filePath)
+              $encodedFileContent = [Convert]::ToBase64String($fileContent)
+
+              $body = @"
+              {
+                `"stream`": `"$encodedFileContent`",
+                `"fileName`": `"log.html`",
+                `"comment`": `"log.html`",
+                `"attachmentType`": `"GeneralAttachment`"
+              }
+              "@
+
+              $uri = "https://dev.azure.com/$organization/$project/_apis/test/runs/$testRunId/results/$testResultId/attachments?api-version=6.0"
+              $response = Invoke-RestMethod -Uri $uri -Method Post -Headers @{Authorization = "Bearer $(System.AccessToken)"; "Content-Type" = "application/json"} -Body $body
+              Write-Output "File Attached to Test Result - ${{ test.name }}"

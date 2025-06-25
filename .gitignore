@@ -1,0 +1,9 @@
+results/
+./browser/
+./output.xml
+./playwright-log.txt
+./report.html
+./log.html
+interactive_console_output.xml
+Tests/Resources/keywords/__pycache__/checkPDF.cpython-311.pyc
+Tests/Resources/keywords/__pycache__/SF_Connection.cpython-311.pyc
